@@ -1,8 +1,8 @@
 <?php
 
 /**
- * This file is part of the Froxlor project.
- * Copyright (c) 2010 the Froxlor Team (see authors).
+ * This file is part of the froxlor project.
+ * Copyright (c) 2010 the froxlor Team (see authors).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,7 +19,7 @@
  * https://files.froxlor.org/misc/COPYING.txt
  *
  * @copyright  the authors
- * @author     Froxlor team <team@froxlor.org>
+ * @author     froxlor team <team@froxlor.org>
  * @license    https://files.froxlor.org/misc/COPYING.txt GPLv2
  */
 
@@ -352,11 +352,12 @@ class DirProtections extends ApiCommand implements ResourceEntity
 		$customer_ids = $this->getAllowedCustomerIds('extras.directoryprotection');
 
 		$result = [];
+		$query_fields = [];
 		$result_stmt = Database::prepare("
 			SELECT COUNT(*) as num_htpasswd FROM `" . TABLE_PANEL_HTPASSWDS . "`
 			WHERE `customerid` IN (" . implode(', ', $customer_ids) . ")
-		");
-		$result = Database::pexecute_first($result_stmt, null, true, true);
+		" . $this->getSearchWhere($query_fields, true));
+		$result = Database::pexecute_first($result_stmt, $query_fields, true, true);
 		if ($result) {
 			return $this->response($result['num_htpasswd']);
 		}

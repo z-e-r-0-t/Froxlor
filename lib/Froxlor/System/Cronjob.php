@@ -1,8 +1,8 @@
 <?php
 
 /**
- * This file is part of the Froxlor project.
- * Copyright (c) 2010 the Froxlor Team (see authors).
+ * This file is part of the froxlor project.
+ * Copyright (c) 2010 the froxlor Team (see authors).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,7 +19,7 @@
  * https://files.froxlor.org/misc/COPYING.txt
  *
  * @copyright  the authors
- * @author     Froxlor team <team@froxlor.org>
+ * @author     froxlor team <team@froxlor.org>
  * @license    https://files.froxlor.org/misc/COPYING.txt GPLv2
  */
 
@@ -118,6 +118,36 @@ class Cronjob
 		}
 	}
 
+	public static function checkCurrentDistro(bool $is_install = false): string
+	{
+		// set default os.
+		$distro = Settings::Get('system.distribution');
+
+		// read os-release
+		if (@file_exists('/etc/os-release') && is_readable('/etc/os-release')) {
+			if (function_exists('parse_ini_file')) {
+				$os_dist = parse_ini_file('/etc/os-release', false);
+			} else {
+				$osrf = explode("\n", file_get_contents('/etc/os-release'));
+				foreach ($osrf as $line) {
+					$osrfline = explode("=", $line);
+					if ($osrfline[0] == 'VERSION_CODENAME') {
+						$os_dist['VERSION_CODENAME'] = $osrfline[1];
+					} elseif ($osrfline[0] == 'ID') {
+						$os_dist['ID'] = $osrfline[1];
+					}
+				}
+			}
+			$distro = strtolower($os_dist['VERSION_CODENAME'] ?? ($os_dist['ID'] ?? $distro));
+		}
+
+		if (!$is_install && $distro != Settings::Get('system.distribution') && Settings::Get('system.distro_mismatch') != '2') {
+			Settings::Set('system.distro_mismatch', '1');
+		}
+
+		return $distro;
+	}
+
 	/**
 	 * Inserts a task into the PANEL_TASKS-Table
 	 *
@@ -134,7 +164,7 @@ class Cronjob
 			INSERT INTO `" . TABLE_PANEL_TASKS . "` SET `type` = :type, `data` = :data
 		");
 
-		if ($type == TaskId::REBUILD_VHOST || $type == TaskId::REBUILD_DNS || $type == TaskId::CREATE_FTP || $type == TaskId::REBUILD_RSPAMD || $type == TaskId::CREATE_QUOTA || $type == TaskId::REBUILD_CRON) {
+		if ($type == TaskId::REBUILD_VHOST || $type == TaskId::REBUILD_DNS || $type == TaskId::CREATE_FTP || $type == TaskId::REBUILD_RSPAMD || $type == TaskId::CREATE_QUOTA || $type == TaskId::REBUILD_CRON || $type == TaskId::UPDATE_LE_SERVICES) {
 			// 4 = bind -> if bind disabled -> no task
 			if ($type == TaskId::REBUILD_DNS && Settings::Get('system.bind_enable') == '0') {
 				return;
@@ -145,6 +175,10 @@ class Cronjob
 			}
 			// 10 = quota -> if quota disabled -> no task
 			if ($type == TaskId::CREATE_QUOTA && Settings::Get('system.diskquota_enabled') == '0') {
+				return;
+			}
+			// 13 = let's encrypt for services -> if services empty = no task
+			if ($type == TaskId::UPDATE_LE_SERVICES && (Settings::Get('system.le_froxlor_enabled') == '0' || Settings::Get('system.le_renew_services') == '')) {
 				return;
 			}
 

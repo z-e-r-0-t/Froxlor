@@ -1,8 +1,8 @@
 <?php
 
 /**
- * This file is part of the Froxlor project.
- * Copyright (c) 2010 the Froxlor Team (see authors).
+ * This file is part of the froxlor project.
+ * Copyright (c) 2010 the froxlor Team (see authors).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,7 +19,7 @@
  * https://files.froxlor.org/misc/COPYING.txt
  *
  * @copyright  the authors
- * @author     Froxlor team <team@froxlor.org>
+ * @author     froxlor team <team@froxlor.org>
  * @license    https://files.froxlor.org/misc/COPYING.txt GPLv2
  */
 
@@ -134,6 +134,35 @@ class Domains extends ApiCommand implements ResourceEntity
 		return $ipandports;
 	}
 
+	private function getHasCertValueForDomain(int $domainid, int $parentdomainid): int
+	{
+		// nothing (ssl_global)
+		$domain_hascert = 0;
+		$ssl_stmt = Database::prepare("SELECT * FROM `" . TABLE_PANEL_DOMAIN_SSL_SETTINGS . "` WHERE `domainid` = :domainid");
+		Database::pexecute($ssl_stmt, array(
+			"domainid" => $domainid
+		));
+		$ssl_result = $ssl_stmt->fetch(PDO::FETCH_ASSOC);
+		if (is_array($ssl_result) && isset($ssl_result['ssl_cert_file']) && $ssl_result['ssl_cert_file'] != '') {
+			// own certificate (ssl_customer_green)
+			$domain_hascert = 1;
+		} else {
+			// check if it's parent has one set (shared)
+			if ($parentdomainid != 0) {
+				$ssl_stmt = Database::prepare("SELECT * FROM `" . TABLE_PANEL_DOMAIN_SSL_SETTINGS . "` WHERE `domainid` = :domainid");
+				Database::pexecute($ssl_stmt, array(
+					"domainid" => $parentdomainid
+				));
+				$ssl_result = $ssl_stmt->fetch(PDO::FETCH_ASSOC);
+				if (is_array($ssl_result) && isset($ssl_result['ssl_cert_file']) && $ssl_result['ssl_cert_file'] != '') {
+					// parent has a certificate (ssl_shared)
+					$domain_hascert = 2;
+				}
+			}
+		}
+		return $domain_hascert;
+	}
+
 	/**
 	 * returns the total number of accessible domains
 	 *
@@ -145,17 +174,19 @@ class Domains extends ApiCommand implements ResourceEntity
 	{
 		if ($this->isAdmin()) {
 			$this->logger()->logAction(FroxlorLogger::ADM_ACTION, LOG_NOTICE, "[API] list domains");
+			$query_fields = [];
 			$result_stmt = Database::prepare("
 				SELECT
 				COUNT(*) as num_domains
 				FROM `" . TABLE_PANEL_DOMAINS . "` `d`
 				LEFT JOIN `" . TABLE_PANEL_CUSTOMERS . "` `c` USING(`customerid`)
 				LEFT JOIN `" . TABLE_PANEL_DOMAINS . "` `ad` ON `d`.`aliasdomain`=`ad`.`id`
-				WHERE `d`.`parentdomainid`='0' " . ($this->getUserDetail('customers_see_all') ? '' : " AND `d`.`adminid` = :adminid "));
+				WHERE `d`.`parentdomainid`='0' " . ($this->getUserDetail('customers_see_all') ? '' : " AND `d`.`adminid` = :adminid ") . $this->getSearchWhere($query_fields, true));
 			$params = [];
 			if ($this->getUserDetail('customers_see_all') == '0') {
 				$params['adminid'] = $this->getUserDetail('adminid');
 			}
+			$params = array_merge($params, $query_fields);
 			$result = Database::pexecute_first($result_stmt, $params, true, true);
 			if ($result) {
 				return $this->response($result['num_domains']);
@@ -201,7 +232,7 @@ class Domains extends ApiCommand implements ResourceEntity
 	 * @param string $zonefile
 	 *            optional, custom dns zone filename (only of nameserver is activated), default empty (auto-generated)
 	 * @param bool $dkim
-	 *            optional, currently not in use, default 0 (false)
+	 *            optional, whether this domain should use dkim if antispam is activated, default 0 (false)
 	 * @param string $specialsettings
 	 *            optional, custom webserver vhost-content which is added to the generated vhost, default empty
 	 * @param string $ssl_specialsettings
@@ -246,6 +277,9 @@ class Domains extends ApiCommand implements ResourceEntity
 	 * @param bool $http2
 	 *            optional, whether to enable http/2 for this domain (requires to be enabled in the settings), default
 	 *            0 (false)
+	 * @param bool $http3
+	 *            optional, whether to enable http/3 for this domain (requires to be enabled in the settings), default
+	 *            0 (false)
 	 * @param int $hsts_maxage
 	 *            optional max-age value for HSTS header
 	 * @param bool $hsts_sub
@@ -274,8 +308,8 @@ class Domains extends ApiCommand implements ResourceEntity
 	 *            $override_tls is true
 	 * @param string $description
 	 *            optional custom description (currently not used/shown in the frontend), default empty
-	 * @param bool $is_stdsubdomain (internally)
-	 *            optional whether this is a standard subdomain for a customer which is being added so no usage is decreased
+	 * @param bool $is_stdsubdomain
+	 *            (internally) optional whether this is a standard subdomain for a customer which is being added so no usage is decreased
 	 * @access admin
 	 * @return string json-encoded array
 	 * @throws Exception
@@ -322,6 +356,7 @@ class Domains extends ApiCommand implements ResourceEntity
 				$dont_use_default_ssl_ipandport_if_empty = $this->getBoolParam('dont_use_default_ssl_ipandport_if_empty', true, 0);
 				$p_ssl_ipandports = $this->getParam('ssl_ipandport', true, $dont_use_default_ssl_ipandport_if_empty ? [] : explode(',', Settings::Get('system.defaultsslip')));
 				$http2 = $this->getBoolParam('http2', true, 0);
+				$http3 = $this->getBoolParam('http3', true, 0);
 				$hsts_maxage = $this->getParam('hsts_maxage', true, 0);
 				$hsts_sub = $this->getBoolParam('hsts_sub', true, 0);
 				$hsts_preload = $this->getBoolParam('hsts_preload', true, 0);
@@ -467,6 +502,21 @@ class Domains extends ApiCommand implements ResourceEntity
 					if (empty($ssl_protocols)) {
 						$override_tls = '0';
 					}
+
+					// http/3 for nginx only works with TLSv1.3 enabled
+					if ($http3 == '1') {
+						// overwrite enabled?
+						if (Settings::Get('system.webserver') != 'nginx') {
+							$http3 = '0';
+						} else {
+							if (($override_tls == '1' && !in_array('TLSv1.3', $ssl_protocols)) ||
+								($override_tls == '0' && !in_array('TLSv1.3', explode(",", Settings::Get('system.ssl_protocols'))))
+							) {
+								// no tlsv1.3 -> no http/3
+								Response::standardError('tls13requiredforhttp3', '', true);
+							}
+						}
+					}
 				} else {
 					$isbinddomain = '0';
 					if (Settings::Get('system.bind_enable') == '1') {
@@ -474,7 +524,6 @@ class Domains extends ApiCommand implements ResourceEntity
 					}
 					$caneditdomain = '1';
 					$zonefile = '';
-					$dkim = '0';
 					$specialsettings = '';
 					$ssl_specialsettings = '';
 					$include_specialsettings = 0;
@@ -550,13 +599,17 @@ class Domains extends ApiCommand implements ResourceEntity
 					}
 				}
 				if (Settings::Get('system.use_ssl') == "1" && $sslenabled == 1 && empty($ssl_ipandports)) {
-					// enabled ssl for the domain but no ssl ip/port is selected
-					Response::standardError('nosslippportgiven', '', true);
+					// if this is a customer standard-subdomain, we simply ignore this and disable ssl-related settings (see if-statement below)
+					if (!$is_stdsubdomain) {
+						// enabled ssl for the domain but no ssl ip/port is selected
+						Response::standardError('nosslippportgiven', '', true);
+					}
 				}
 				if (Settings::Get('system.use_ssl') == "0" || empty($ssl_ipandports)) {
 					$ssl_redirect = 0;
 					$letsencrypt = 0;
 					$http2 = 0;
+					$http3 = 0;
 					// we need this for the json_encode
 					// if ssl is disabled or no ssl-ip/port exists
 					$ssl_ipandports[] = -1;
@@ -593,12 +646,18 @@ class Domains extends ApiCommand implements ResourceEntity
 					$ssl_redirect = 2;
 				}
 
-				if (!preg_match('/^https?\:\/\//', $documentroot)) {
-					if (strstr($documentroot, ":") !== false) {
-						Response::standardError('pathmaynotcontaincolon', '', true);
-					} else {
-						$documentroot = FileDir::makeCorrectDir($documentroot);
+				// Check if given documentroot is either a valid URL or a valid path
+				if (preg_match('/^https?\:\/\//', $documentroot)) {
+					$encoded = $idna_convert->encode($documentroot);
+					if (!Validate::validateUrl($encoded, true)) {
+						Response::standardError('invaliddocumentrooturl', '', true);
 					}
+					$documentroot = $encoded;
+				} else {
+					if (strpos($documentroot, ':') !== false) {
+						Response::standardError('pathmaynotcontaincolon', '', true);
+					}
+					$documentroot = FileDir::makeCorrectDir($documentroot);
 				}
 
 				$domain_check_stmt = Database::prepare("
@@ -726,6 +785,7 @@ class Domains extends ApiCommand implements ResourceEntity
 						'mod_fcgid_maxrequests' => $mod_fcgid_maxrequests,
 						'letsencrypt' => $letsencrypt,
 						'http2' => $http2,
+						'http3' => $http3,
 						'hsts' => $hsts_maxage,
 						'hsts_sub' => $hsts_sub,
 						'hsts_preload' => $hsts_preload,
@@ -779,6 +839,7 @@ class Domains extends ApiCommand implements ResourceEntity
 						`mod_fcgid_maxrequests` = :mod_fcgid_maxrequests,
 						`letsencrypt` = :letsencrypt,
 						`http2` = :http2,
+						`http3` = :http3,
 						`hsts` = :hsts,
 						`hsts_sub` = :hsts_sub,
 						`hsts_preload` = :hsts_preload,
@@ -912,35 +973,6 @@ class Domains extends ApiCommand implements ResourceEntity
 		throw new Exception("Not allowed to execute given command.", 403);
 	}
 
-	private function getHasCertValueForDomain(int $domainid, int $parentdomainid): int
-	{
-		// nothing (ssl_global)
-		$domain_hascert = 0;
-		$ssl_stmt = Database::prepare("SELECT * FROM `" . TABLE_PANEL_DOMAIN_SSL_SETTINGS . "` WHERE `domainid` = :domainid");
-		Database::pexecute($ssl_stmt, array(
-			"domainid" => $domainid
-		));
-		$ssl_result = $ssl_stmt->fetch(PDO::FETCH_ASSOC);
-		if (is_array($ssl_result) && isset($ssl_result['ssl_cert_file']) && $ssl_result['ssl_cert_file'] != '') {
-			// own certificate (ssl_customer_green)
-			$domain_hascert = 1;
-		} else {
-			// check if it's parent has one set (shared)
-			if ($parentdomainid != 0) {
-				$ssl_stmt = Database::prepare("SELECT * FROM `" . TABLE_PANEL_DOMAIN_SSL_SETTINGS . "` WHERE `domainid` = :domainid");
-				Database::pexecute($ssl_stmt, array(
-					"domainid" => $parentdomainid
-				));
-				$ssl_result = $ssl_stmt->fetch(PDO::FETCH_ASSOC);
-				if (is_array($ssl_result) && isset($ssl_result['ssl_cert_file']) && $ssl_result['ssl_cert_file'] != '') {
-					// parent has a certificate (ssl_shared)
-					$domain_hascert = 2;
-				}
-			}
-		}
-		return $domain_hascert;
-	}
-
 	/**
 	 * validate given ips
 	 *
@@ -1063,6 +1095,9 @@ class Domains extends ApiCommand implements ResourceEntity
 	 *            (default yes), 3 = always, default 0 (never)
 	 * @param bool $isemaildomain
 	 *            optional, allow email usage with this domain, default 0 (false)
+	 * @param bool $emaildomainverified
+	 *            optional, when setting $isemaildomain to false, this needs to be set to true to confirm the action in case email addresses exist for this domain,
+	 *            default 0 (false)
 	 * @param bool $email_only
 	 *            optional, restrict domain to email usage, default 0 (false)
 	 * @param int $selectserveralias
@@ -1085,7 +1120,7 @@ class Domains extends ApiCommand implements ResourceEntity
 	 * @param string $zonefile
 	 *            optional, custom dns zone filename (only of nameserver is activated), default empty (auto-generated)
 	 * @param bool $dkim
-	 *            optional, currently not in use, default 0 (false)
+	 *            optional, whether this domain should use dkim if antispam is activated, default 0 (false)
 	 * @param string $specialsettings
 	 *            optional, custom webserver vhost-content which is added to the generated vhost, default empty
 	 * @param string $ssl_specialsettings
@@ -1136,6 +1171,9 @@ class Domains extends ApiCommand implements ResourceEntity
 	 *            1 (true)
 	 * @param bool $http2
 	 *            optional, whether to enable http/2 for this domain (requires to be enabled in the settings), default
+	 *            0 (false)
+	 * @param bool $http3
+	 *            optional, whether to enable http/3 for this domain (requires to be enabled in the settings), default
 	 *            0 (false)
 	 * @param int $hsts_maxage
 	 *            optional max-age value for HSTS header
@@ -1190,6 +1228,7 @@ class Domains extends ApiCommand implements ResourceEntity
 
 			$subcanemaildomain = $this->getParam('subcanemaildomain', true, $result['subcanemaildomain']);
 			$isemaildomain = $this->getBoolParam('isemaildomain', true, $result['isemaildomain']);
+			$emaildomainverified = $this->getBoolParam('emaildomainverified', true, 0);
 			$email_only = $this->getBoolParam('email_only', true, $result['email_only']);
 			$p_serveraliasoption = $this->getParam('selectserveralias', true, -1);
 			$speciallogfile = $this->getBoolParam('speciallogfile', true, $result['speciallogfile']);
@@ -1224,6 +1263,7 @@ class Domains extends ApiCommand implements ResourceEntity
 			] : null);
 			$sslenabled = $remove_ssl_ipandport ? false : $this->getBoolParam('sslenabled', true, $result['ssl_enabled']);
 			$http2 = $this->getBoolParam('http2', true, $result['http2']);
+			$http3 = $this->getBoolParam('http3', true, $result['http3']);
 			$hsts_maxage = $this->getParam('hsts_maxage', true, $result['hsts']);
 			$hsts_sub = $this->getBoolParam('hsts_sub', true, $result['hsts_sub']);
 			$hsts_preload = $this->getBoolParam('hsts_preload', true, $result['hsts_preload']);
@@ -1273,7 +1313,7 @@ class Domains extends ApiCommand implements ResourceEntity
 
 			// count where we are used in email-accounts
 			$domain_emails_result_stmt = Database::prepare("
-				SELECT `email`, `email_full`, `destination`, `popaccountid` AS `number_email_forwarders`
+				SELECT `email`, `email_full`, `destination`, `popaccountid`
 				FROM `" . TABLE_MAIL_VIRTUAL . "` WHERE `customerid` = :customerid AND `domainid` = :id
 			");
 			Database::pexecute($domain_emails_result_stmt, [
@@ -1294,6 +1334,10 @@ class Domains extends ApiCommand implements ResourceEntity
 						$email_accounts++;
 					}
 				}
+			}
+
+			if ($emails > 0 && (int)$isemaildomain == 0 && (int)$result['isemaildomain'] == 1 && (int)$emaildomainverified == 0) {
+				Response::standardError('emaildomainstillhasaddresses', '', true);
 			}
 
 			// handle change of customer (move domain from customer to customer)
@@ -1404,10 +1448,6 @@ class Domains extends ApiCommand implements ResourceEntity
 				}
 			}
 
-			if (!preg_match('/^https?\:\/\//', $documentroot) && strstr($documentroot, ":") !== false) {
-				Response::standardError('pathmaynotcontaincolon', '', true);
-			}
-
 			if ($this->getUserDetail('change_serversettings') == '1') {
 				if (Settings::Get('system.bind_enable') == '1') {
 					$zonefile = Validate::validate($zonefile, 'zonefile', '', '', [], true);
@@ -1449,10 +1489,24 @@ class Domains extends ApiCommand implements ResourceEntity
 				if (empty($ssl_protocols)) {
 					$override_tls = '0';
 				}
+
+				// http/3 for nginx only works with TLSv1.3 enabled
+				if ($http3 == '1') {
+					// overwrite enabled?
+					if (Settings::Get('system.webserver') != 'nginx') {
+						$http3 = '0';
+					} else {
+						if (($override_tls == '1' && !in_array('TLSv1.3', $ssl_protocols)) ||
+							($override_tls == '0' && !in_array('TLSv1.3', explode(",", Settings::Get('system.ssl_protocols'))))
+						) {
+							// no tlsv1.3 -> no http/3
+							Response::standardError('tls13requiredforhttp3', '', true);
+						}
+					}
+				}
 			} else {
 				$isbinddomain = $result['isbinddomain'];
 				$zonefile = $result['zonefile'];
-				$dkim = $result['dkim'];
 				$specialsettings = $result['specialsettings'];
 				$ssl_specialsettings = $result['ssl_specialsettings'];
 				$include_specialsettings = $result['include_specialsettings'];
@@ -1540,6 +1594,7 @@ class Domains extends ApiCommand implements ResourceEntity
 				$ssl_redirect = 0;
 				$letsencrypt = 0;
 				$http2 = 0;
+				$http3 = 0;
 				// act like $remove_ssl_ipandport
 				$ssl_ipandports = [];
 
@@ -1571,14 +1626,24 @@ class Domains extends ApiCommand implements ResourceEntity
 			}
 
 			// Temporarily deactivate ssl_redirect until Let's Encrypt certificate was generated
-			if (($result['letsencrypt'] != $letsencrypt || $result['ssl_redirect'] != $ssl_redirect) && $ssl_redirect > 0 && $letsencrypt == 1) {
+			if ($result['letsencrypt'] != $letsencrypt && $ssl_redirect > 0 && $letsencrypt == 1) {
 				$ssl_redirect = 2;
 			}
 
-			if (!preg_match('/^https?\:\/\//', $documentroot)) {
-				if ($documentroot != $result['documentroot']) {
+			$idna_convert = new IdnaWrapper();
+			if ($documentroot != $result['documentroot']) {
+				if (preg_match('/^https?\:\/\//', $documentroot)) {
+					$encoded = $idna_convert->encode($documentroot);
+					if (!Validate::validateUrl($encoded, true)) {
+						Response::standardError('invaliddocumentrooturl', '', true);
+					}
+					$documentroot = $encoded;
+				} else {
 					if (substr($documentroot, 0, 1) != "/") {
 						$documentroot = $customer['documentroot'] . '/' . $documentroot;
+					}
+					if (strpos($documentroot, ':') !== false) {
+						Response::standardError('pathmaynotcontaincolon', '', true);
 					}
 					$documentroot = FileDir::makeCorrectDir($documentroot);
 				}
@@ -1674,6 +1739,7 @@ class Domains extends ApiCommand implements ResourceEntity
 				|| ($speciallogfile != $result['speciallogfile'] && $speciallogverified == '1')
 				|| $letsencrypt != $result['letsencrypt']
 				|| $http2 != $result['http2']
+				|| $http3 != $result['http3']
 				|| $hsts_maxage != $result['hsts']
 				|| $hsts_sub != $result['hsts_sub']
 				|| $hsts_preload != $result['hsts_preload']
@@ -1847,6 +1913,7 @@ class Domains extends ApiCommand implements ResourceEntity
 			$update_data['termination_date'] = $termination_date;
 			$update_data['letsencrypt'] = $letsencrypt;
 			$update_data['http2'] = $http2;
+			$update_data['http3'] = $http3;
 			$update_data['hsts'] = $hsts_maxage;
 			$update_data['hsts_sub'] = $hsts_sub;
 			$update_data['hsts_preload'] = $hsts_preload;
@@ -1895,6 +1962,7 @@ class Domains extends ApiCommand implements ResourceEntity
 				`termination_date` = :termination_date,
 				`letsencrypt` = :letsencrypt,
 				`http2` = :http2,
+				`http3` = :http3,
 				`hsts` = :hsts,
 				`hsts_sub` = :hsts_sub,
 				`hsts_preload` = :hsts_preload,
@@ -2001,7 +2069,7 @@ class Domains extends ApiCommand implements ResourceEntity
 				'id' => $id
 			], true, true);
 			$current_ips = [];
-			while ($cIP = $ip_sel_stmt->fetch(\PDO::FETCH_ASSOC)) {
+			while ($cIP = $ip_sel_stmt->fetch(PDO::FETCH_ASSOC)) {
 				$current_ips[] = $cIP['id_ipandports'];
 			}
 
@@ -2090,7 +2158,6 @@ class Domains extends ApiCommand implements ResourceEntity
 				}
 			}
 
-			$idna_convert = new IdnaWrapper();
 			$this->logger()->logAction(FroxlorLogger::ADM_ACTION, LOG_WARNING, "[API] updated domain '" . $idna_convert->decode($result['domain']) . "'");
 			$result = $this->apiCall('Domains.get', [
 				'domainname' => $result['domain']

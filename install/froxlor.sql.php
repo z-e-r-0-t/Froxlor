@@ -1,8 +1,8 @@
 <?php
 
 /**
- * This file is part of the Froxlor project.
- * Copyright (c) 2010 the Froxlor Team (see authors).
+ * This file is part of the froxlor project.
+ * Copyright (c) 2010 the froxlor Team (see authors).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,7 +19,7 @@
  * https://files.froxlor.org/misc/COPYING.txt
  *
  * @copyright  the authors
- * @author     Froxlor team <team@froxlor.org>
+ * @author     froxlor team <team@froxlor.org>
  * @license    https://files.froxlor.org/misc/COPYING.txt GPLv2
  */
 
@@ -103,6 +103,14 @@ CREATE TABLE `mail_virtual` (
   KEY `email` (`email`)
 ) ENGINE=InnoDB CHARSET=utf8 COLLATE=utf8_general_ci;
 
+DROP TABLE IF EXISTS `mail_sender_aliases`;
+CREATE TABLE `mail_sender_aliases` (
+  `id` int(11) NOT NULL auto_increment,
+  `email` varchar(255) NOT NULL,
+  `allowed_sender` varchar(255) NOT NULL,
+  PRIMARY KEY  (`id`),
+  UNIQUE KEY `email_sender` (`email`, `allowed_sender`)
+) ENGINE=InnoDB CHARSET=utf8 COLLATE=utf8_general_ci;
 
 DROP TABLE IF EXISTS `panel_activation`;
 CREATE TABLE `panel_activation` (
@@ -227,6 +235,7 @@ CREATE TABLE `panel_customers` (
   `type_2fa` tinyint(1) NOT NULL default '0',
   `data_2fa` varchar(25) NOT NULL default '',
   `api_allowed` tinyint(1) NOT NULL default '1',
+  `shell_allowed` tinyint(1) NOT NULL default '0',
   `logviewenabled` tinyint(1) NOT NULL default '0',
   `allowed_mysqlserver` text NOT NULL,
   `gui_access` tinyint(1) NOT NULL default '1',
@@ -291,6 +300,7 @@ CREATE TABLE `panel_domains` (
   `hsts_preload` tinyint(1) NOT NULL default '0',
   `ocsp_stapling` tinyint(1) DEFAULT '0',
   `http2` tinyint(1) DEFAULT '0',
+  `http3` tinyint(1) DEFAULT '0',
   `notryfiles` tinyint(1) DEFAULT '0',
   `writeaccesslog` tinyint(1) DEFAULT '1',
   `writeerrorlog` tinyint(1) DEFAULT '1',
@@ -391,6 +401,9 @@ INSERT INTO `panel_settings` (`settinggroup`, `varname`, `value`) VALUES
 	('antispam', 'config_file', '/etc/rspamd/local.d/froxlor_settings.conf'),
 	('antispam', 'reload_command', 'service rspamd restart'),
 	('antispam', 'dkim_keylength', '1024'),
+	('antispam', 'default_bypass_spam', '2'),
+	('antispam', 'default_spam_rewrite_subject', '1'),
+	('antispam', 'default_policy_greylist', '1'),
 	('admin', 'show_news_feed', '0'),
 	('admin', 'show_version_login', '0'),
 	('admin', 'show_version_footer', '0'),
@@ -588,7 +601,6 @@ opcache.validate_timestamps'),
 	('system', 'diskquota_quotatool_path', '/usr/bin/quotatool'),
 	('system', 'diskquota_customer_partition', '/dev/root'),
 	('system', 'mod_fcgid_idle_timeout', '30'),
-	('system', 'perl_path', '/usr/bin/perl'),
 	('system', 'mod_fcgid_ownvhost', '0'),
 	('system', 'mod_fcgid_httpuser', 'froxlorlocal'),
 	('system', 'mod_fcgid_httpgroup', 'froxlorlocal'),
@@ -599,6 +611,7 @@ opcache.validate_timestamps'),
 	('system', 'ssl_cipher_list', 'ECDH+AESGCM:ECDH+AES256:!aNULL:!MD5:!DSS:!DH:!AES128'),
 	('system', 'nginx_php_backend', '127.0.0.1:8888'),
 	('system', 'http2_support', '0'),
+	('system', 'http3_support', '0'),
 	('system', 'perl_server', 'unix:/var/run/nginx/cgiwrap-dispatch.sock'),
 	('system', 'phpreload_command', ''),
 	('system', 'apache24', '1'),
@@ -680,6 +693,7 @@ opcache.validate_timestamps'),
 	('system', 'froxlorusergroup_gid', ''),
 	('system', 'acmeshpath', '/root/.acme.sh/acme.sh'),
 	('system', 'distribution', ''),
+	('system', 'distro_mismatch', '0'),
 	('system', 'update_channel', 'stable'),
 	('system', 'updatecheck_data', ''),
 	('system', 'update_notify_last', ''),
@@ -689,6 +703,8 @@ opcache.validate_timestamps'),
 	('api', 'enabled', '0'),
 	('api', 'customer_default', '1'),
 	('2fa', 'enabled', '1'),
+	('mail', 'enable_allow_sender', '0'),
+	('mail', 'allow_external_domains', '0'),
 	('panel', 'decimal_places', '4'),
 	('panel', 'adminmail', 'ADMIN_MAIL'),
 	('panel', 'phpmyadmin_url', ''),
@@ -730,8 +746,8 @@ opcache.validate_timestamps'),
 	('panel', 'logo_overridecustom', '0'),
 	('panel', 'settings_mode', '0'),
 	('panel', 'menu_collapsed', '1'),
-	('panel', 'version', '2.2.5'),
-	('panel', 'db_version', '202409280');
+	('panel', 'version', '2.3.0'),
+	('panel', 'db_version', '202511020');
 
 
 DROP TABLE IF EXISTS `panel_tasks`;
@@ -877,8 +893,8 @@ CREATE TABLE `panel_phpconfigs` (
 
 
 INSERT INTO `panel_phpconfigs` (`id`, `description`, `binary`, `file_extensions`, `mod_fcgid_starter`, `mod_fcgid_maxrequests`, `pass_authorizationheader`, `phpsettings`) VALUES
-(1, 'Default Config', '/usr/bin/php-cgi', 'php', '-1', '-1', '1', 'allow_url_fopen = Off\r\nallow_url_include = Off\r\nauto_append_file =\r\nauto_globals_jit = On\r\nauto_prepend_file =\r\nbcmath.scale = 0\r\ncli_server.color = On\r\ndefault_charset = "UTF-8"\r\ndefault_mimetype = "text/html"\r\ndefault_socket_timeout = 60\r\nasp_tags = Off\r\ndisable_functions = pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority,pcntl_async_signals,curl_exec,curl_multi_exec,exec,parse_ini_file,passthru,popen,proc_close,proc_get_status,proc_nice,proc_open,proc_terminate,shell_exec,show_source,system\r\ndisplay_errors = Off\r\ndisplay_startup_errors = Off\r\ndoc_root =\r\nenable_dl = Off\r\nerror_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT & ~E_NOTICE\r\nexpose_php = Off\r\nfile_uploads = On\r\nhtml_errors = On\r\nignore_repeated_errors = Off\r\nignore_repeated_source = Off\r\ninclude_path = ".:{PEAR_DIR}"\r\nimplicit_flush = Off\r\nldap.max_links = -1\r\nlog_errors = On\r\nlog_errors_max_len = 1024\r\nmail.add_x_header = Off\r\nmax_execution_time = 30\r\nmax_file_uploads = 20\r\nmax_input_time = 60\r\nmemory_limit = 128M\r\n{OPEN_BASEDIR_C}open_basedir = "{OPEN_BASEDIR}"\r\noutput_buffering = 4096\r\npost_max_size = 16M\r\nprecision = 14\r\nregister_argc_argv = Off\r\nreport_memleaks = On\r\nrequest_order = "GP"\r\nsendmail_path = "/usr/sbin/sendmail -t -i -f {CUSTOMER_EMAIL}"\r\nserialize_precision = -1\r\nsession.auto_start = 0\r\nsession.cache_expire = 180\r\nsession.cache_limiter = nocache\r\nsession.cookie_domain =\r\nsession.cookie_httponly =\r\nsession.cookie_lifetime = 0\r\nsession.cookie_path = /\r\nsession.cookie_samesite =\r\nsession.gc_divisor = 1000\r\nsession.gc_maxlifetime = 1440\r\nsession.gc_probability = 0\r\nsession.name = PHPSESSID\r\nsession.referer_check =\r\nsession.save_handler = files\r\nsession.save_path = "{TMP_DIR}"\r\nsession.serialize_handler = php\r\nsession.sid_bits_per_character = 5\r\nsession.sid_length = 26\r\nsession.trans_sid_tags = "a=href,area=href,frame=src,form="\r\nsession.use_cookies = 1\r\nsession.use_only_cookies = 1\r\nsession.use_strict_mode = 0\r\nsession.use_trans_sid = 0\r\nshort_open_tag = On\r\nupload_max_filesize = 32M\r\nupload_tmp_dir = "{TMP_DIR}"\r\nvariables_order = "GPCS"\r\nopcache.restrict_api = "{DOCUMENT_ROOT}"\r\n'),
-(2, 'Froxlor Vhost Config', '/usr/bin/php-cgi', 'php', '-1', '-1', '1', 'allow_url_fopen = On\r\nallow_url_include = Off\r\nauto_append_file =\r\nauto_globals_jit = On\r\nauto_prepend_file =\r\nbcmath.scale = 0\r\ncli_server.color = On\r\ndefault_charset = "UTF-8"\r\ndefault_mimetype = "text/html"\r\ndefault_socket_timeout = 60\r\nasp_tags = Off\r\ndisable_functions = pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority,pcntl_async_signals,curl_multi_exec,parse_ini_file,passthru,popen,proc_close,proc_get_status,proc_nice,proc_open,proc_terminate,shell_exec,show_source,system\r\ndisplay_errors = Off\r\ndisplay_startup_errors = Off\r\ndoc_root =\r\nenable_dl = Off\r\nerror_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT & ~E_NOTICE\r\nexpose_php = Off\r\nfile_uploads = On\r\nhtml_errors = On\r\nignore_repeated_errors = Off\r\nignore_repeated_source = Off\r\ninclude_path = ".:{PEAR_DIR}"\r\nimplicit_flush = Off\r\nldap.max_links = -1\r\nlog_errors = On\r\nlog_errors_max_len = 1024\r\nmail.add_x_header = Off\r\nmax_execution_time = 60\r\nmax_file_uploads = 20\r\nmax_input_time = 60\r\nmemory_limit = 128M\r\noutput_buffering = 4096\r\npost_max_size = 16M\r\nprecision = 14\r\nregister_argc_argv = Off\r\nreport_memleaks = On\r\nrequest_order = "GP"\r\nsendmail_path = "/usr/sbin/sendmail -t -i -f {CUSTOMER_EMAIL}"\r\nserialize_precision = -1\r\nsession.auto_start = 0\r\nsession.cache_expire = 180\r\nsession.cache_limiter = nocache\r\nsession.cookie_domain =\r\nsession.cookie_httponly =\r\nsession.cookie_lifetime = 0\r\nsession.cookie_path = /\r\nsession.cookie_samesite =\r\nsession.gc_divisor = 1000\r\nsession.gc_maxlifetime = 1440\r\nsession.gc_probability = 0\r\nsession.name = PHPSESSID\r\nsession.referer_check =\r\nsession.save_handler = files\r\nsession.save_path = "{TMP_DIR}"\r\nsession.serialize_handler = php\r\nsession.sid_bits_per_character = 5\r\nsession.sid_length = 26\r\nsession.trans_sid_tags = "a=href,area=href,frame=src,form="\r\nsession.use_cookies = 1\r\nsession.use_only_cookies = 1\r\nsession.use_strict_mode = 0\r\nsession.use_trans_sid = 0\r\nshort_open_tag = On\r\nupload_max_filesize = 32M\r\nupload_tmp_dir = "{TMP_DIR}"\r\nvariables_order = "GPCS"\r\nopcache.restrict_api = ""\r\n');
+(1, 'Default Config', '/usr/bin/php-cgi', 'php', '-1', '-1', '1', 'allow_url_fopen = Off\r\nallow_url_include = Off\r\nauto_append_file =\r\nauto_globals_jit = On\r\nauto_prepend_file =\r\nbcmath.scale = 0\r\ncli_server.color = On\r\ndefault_charset = "UTF-8"\r\ndefault_mimetype = "text/html"\r\ndefault_socket_timeout = 60\r\nasp_tags = Off\r\ndisable_functions = pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority,pcntl_async_signals,curl_exec,curl_multi_exec,exec,parse_ini_file,passthru,popen,proc_close,proc_get_status,proc_nice,proc_open,proc_terminate,shell_exec,show_source,system\r\ndisplay_errors = Off\r\ndisplay_startup_errors = Off\r\ndoc_root =\r\nenable_dl = Off\r\nerror_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT & ~E_NOTICE\r\nexpose_php = Off\r\nfile_uploads = On\r\nhtml_errors = On\r\nignore_repeated_errors = Off\r\nignore_repeated_source = Off\r\ninclude_path = ".:{PEAR_DIR}"\r\nimplicit_flush = Off\r\nldap.max_links = -1\r\nlog_errors = On\r\nlog_errors_max_len = 1024\r\nmail.add_x_header = Off\r\nmax_execution_time = 30\r\nmax_file_uploads = 20\r\nmax_input_time = 60\r\nmemory_limit = 128M\r\n{OPEN_BASEDIR_C}open_basedir = "{OPEN_BASEDIR}"\r\noutput_buffering = 4096\r\npost_max_size = 16M\r\nprecision = 14\r\nregister_argc_argv = Off\r\nreport_memleaks = On\r\nrequest_order = "GP"\r\nsendmail_path = "/usr/sbin/sendmail -t -i -f postmaster@{DOMAIN}"\r\nserialize_precision = -1\r\nsession.auto_start = 0\r\nsession.cache_expire = 180\r\nsession.cache_limiter = nocache\r\nsession.cookie_domain =\r\nsession.cookie_httponly =\r\nsession.cookie_lifetime = 0\r\nsession.cookie_path = /\r\nsession.cookie_samesite =\r\nsession.gc_divisor = 1000\r\nsession.gc_maxlifetime = 1440\r\nsession.gc_probability = 0\r\nsession.name = PHPSESSID\r\nsession.referer_check =\r\nsession.save_handler = files\r\nsession.save_path = "{TMP_DIR}"\r\nsession.serialize_handler = php\r\nsession.sid_bits_per_character = 5\r\nsession.sid_length = 26\r\nsession.trans_sid_tags = "a=href,area=href,frame=src,form="\r\nsession.use_cookies = 1\r\nsession.use_only_cookies = 1\r\nsession.use_strict_mode = 0\r\nsession.use_trans_sid = 0\r\nshort_open_tag = On\r\nupload_max_filesize = 32M\r\nupload_tmp_dir = "{TMP_DIR}"\r\nvariables_order = "GPCS"\r\nopcache.restrict_api = "{DOCUMENT_ROOT}"\r\n'),
+(2, 'Froxlor Vhost Config', '/usr/bin/php-cgi', 'php', '-1', '-1', '1', 'allow_url_fopen = On\r\nallow_url_include = Off\r\nauto_append_file =\r\nauto_globals_jit = On\r\nauto_prepend_file =\r\nbcmath.scale = 0\r\ncli_server.color = On\r\ndefault_charset = "UTF-8"\r\ndefault_mimetype = "text/html"\r\ndefault_socket_timeout = 60\r\nasp_tags = Off\r\ndisable_functions = pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority,pcntl_async_signals,curl_multi_exec,parse_ini_file,passthru,popen,proc_close,proc_get_status,proc_nice,proc_open,proc_terminate,shell_exec,show_source,system\r\ndisplay_errors = Off\r\ndisplay_startup_errors = Off\r\ndoc_root =\r\nenable_dl = Off\r\nerror_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT & ~E_NOTICE\r\nexpose_php = Off\r\nfile_uploads = On\r\nhtml_errors = On\r\nignore_repeated_errors = Off\r\nignore_repeated_source = Off\r\ninclude_path = ".:{PEAR_DIR}"\r\nimplicit_flush = Off\r\nldap.max_links = -1\r\nlog_errors = On\r\nlog_errors_max_len = 1024\r\nmail.add_x_header = Off\r\nmax_execution_time = 60\r\nmax_file_uploads = 20\r\nmax_input_time = 60\r\nmemory_limit = 128M\r\noutput_buffering = 4096\r\npost_max_size = 16M\r\nprecision = 14\r\nregister_argc_argv = Off\r\nreport_memleaks = On\r\nrequest_order = "GP"\r\nsendmail_path = "/usr/sbin/sendmail -t -i -f postmaster@{DOMAIN}"\r\nserialize_precision = -1\r\nsession.auto_start = 0\r\nsession.cache_expire = 180\r\nsession.cache_limiter = nocache\r\nsession.cookie_domain =\r\nsession.cookie_httponly =\r\nsession.cookie_lifetime = 0\r\nsession.cookie_path = /\r\nsession.cookie_samesite =\r\nsession.gc_divisor = 1000\r\nsession.gc_maxlifetime = 1440\r\nsession.gc_probability = 0\r\nsession.name = PHPSESSID\r\nsession.referer_check =\r\nsession.save_handler = files\r\nsession.save_path = "{TMP_DIR}"\r\nsession.serialize_handler = php\r\nsession.sid_bits_per_character = 5\r\nsession.sid_length = 26\r\nsession.trans_sid_tags = "a=href,area=href,frame=src,form="\r\nsession.use_cookies = 1\r\nsession.use_only_cookies = 1\r\nsession.use_strict_mode = 0\r\nsession.use_trans_sid = 0\r\nshort_open_tag = On\r\nupload_max_filesize = 32M\r\nupload_tmp_dir = "{TMP_DIR}"\r\nvariables_order = "GPCS"\r\nopcache.restrict_api = ""\r\n');
 
 
 DROP TABLE IF EXISTS `cronjobs_run`;
@@ -1058,6 +1074,16 @@ CREATE TABLE `panel_2fa_tokens` (
   `token` varchar(200) NOT NULL,
   `userid` int(11) NOT NULL default '0',
   `valid_until` int(15) NOT NULL,
+  PRIMARY KEY  (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+
+DROP TABLE IF EXISTS `panel_sshkeys`;
+CREATE TABLE `panel_sshkeys` (
+  `id` int(11) NOT NULL auto_increment,
+  `customerid` int(11) NOT NULL,
+  `ftp_user_id` int(20) NOT NULL,
+  `ssh_pubkey` text NOT NULL,
+  `description` varchar(255) NOT NULL DEFAULT '',
   PRIMARY KEY  (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 FROXLORSQL;

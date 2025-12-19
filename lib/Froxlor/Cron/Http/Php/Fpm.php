@@ -1,8 +1,8 @@
 <?php
 
 /**
- * This file is part of the Froxlor project.
- * Copyright (c) 2010 the Froxlor Team (see authors).
+ * This file is part of the froxlor project.
+ * Copyright (c) 2010 the froxlor Team (see authors).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,7 +19,7 @@
  * https://files.froxlor.org/misc/COPYING.txt
  *
  * @copyright  the authors
- * @author     Froxlor team <team@froxlor.org>
+ * @author     froxlor team <team@froxlor.org>
  * @license    https://files.froxlor.org/misc/COPYING.txt GPLv2
  */
 
@@ -274,8 +274,8 @@ pm.max_children = 1
 
 			$fpm_config .= "\n\n";
 			foreach ($phpini_array as $inisection) {
-				$is = explode("=", trim($inisection));
-				if (count($is) !== 2 || empty($is[0])) {
+				$is = explode("=", trim($inisection), 2);
+				if (empty($is[0])) {
 					continue;
 				}
 				foreach ($this->ini as $sec => $possibles) {
@@ -292,7 +292,7 @@ pm.max_children = 1
 			// now check if 'sendmail_path' has not been set in the custom-php.ini
 			// if not we use our fallback-default as usual
 			if (strpos($fpm_config, 'php_admin_value[sendmail_path]') === false) {
-				$fpm_config .= 'php_admin_value[sendmail_path] = /usr/sbin/sendmail -t -i -f ' . $this->domain['email'] . "\n";
+				$fpm_config .= 'php_admin_value[sendmail_path] = /usr/sbin/sendmail -t -i -f postmaster@' . $this->domain['domain'] . "\n";
 			}
 
 			// check for session.save_path, whether it has been specified by the user, if not, set a default

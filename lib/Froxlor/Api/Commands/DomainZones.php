@@ -1,8 +1,8 @@
 <?php
 
 /**
- * This file is part of the Froxlor project.
- * Copyright (c) 2010 the Froxlor Team (see authors).
+ * This file is part of the froxlor project.
+ * Copyright (c) 2010 the froxlor Team (see authors).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,7 +19,7 @@
  * https://files.froxlor.org/misc/COPYING.txt
  *
  * @copyright  the authors
- * @author     Froxlor team <team@froxlor.org>
+ * @author     froxlor team <team@froxlor.org>
  * @license    https://files.froxlor.org/misc/COPYING.txt GPLv2
  */
 
@@ -156,29 +156,23 @@ class DomainZones extends ApiCommand implements ResourceEntity
 			$errors[] = lng('error.dns_content_empty');
 		}
 
+		if ($type != 'CNAME') {
+			// check whether there is a CNAME-record for the same resource
+			foreach ($dom_entries as $existing_entries) {
+				if ($existing_entries['type'] == 'CNAME' && $existing_entries['record'] == $record) {
+					$errors[] = lng('error.dns_other_nomorerr');
+					break;
+				}
+			}
+		}
+
 		// types
 		if ($type == 'A' && filter_var($content, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
 			$errors[] = lng('error.dns_arec_noipv4');
-		} elseif ($type == 'A') {
-			// check whether there is a CNAME-record for the same resource
-			foreach ($dom_entries as $existing_entries) {
-				if ($existing_entries['type'] == 'CNAME' && $existing_entries['record'] == $record) {
-					$errors[] = lng('error.dns_other_nomorerr');
-					break;
-				}
-			}
 		} elseif ($type == 'AAAA' && filter_var($content, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
 			$errors[] = lng('error.dns_aaaarec_noipv6');
-		} elseif ($type == 'AAAA') {
-			// check whether there is a CNAME-record for the same resource
-			foreach ($dom_entries as $existing_entries) {
-				if ($existing_entries['type'] == 'CNAME' && $existing_entries['record'] == $record) {
-					$errors[] = lng('error.dns_other_nomorerr');
-					break;
-				}
-			}
 		} elseif ($type == 'CAA' && !empty($content)) {
-			$re = '/(?\'critical\'\d)\h*(?\'type\'iodef|issue|issuewild)\h*(?\'value\'(?\'issuevalue\'"(?\'domain\'(?=.{3,128}$)(?>(?>[a-zA-Z0-9]+[a-zA-Z0-9-]*[a-zA-Z0-9]+|[a-zA-Z0-9]+)\.)*(?>[a-zA-Z]{2,}|[a-zA-Z0-9]{2,}\.[a-zA-Z]{2,}))[;\h]*(?\'parameters\'(?>[a-zA-Z0-9]{1,60}=[a-zA-Z0-9]{1,60}\h*)+)?")|(?\'iodefvalue\'"(?\'url\'(mailto:.*|http:\/\/.*|https:\/\/.*))"))/';
+			$re = '/(?\'critical\'\d+)\h*(?\'type\'iodef|issue|issuewild)\h*(?\'value\'(?\'issuevalue\'"(?\'domain\'(?=.{3,128}$)(?>(?>[a-zA-Z0-9]+[a-zA-Z0-9-]*[a-zA-Z0-9]+|[a-zA-Z0-9]+)\.)*(?>[a-zA-Z]{2,}|[a-zA-Z0-9]{2,}\.[a-zA-Z]{2,}))[;\h]*(?\'parameters\'(?>[a-zA-Z0-9]{1,60}=[a-zA-Z0-9:\.\/\-]{1,60}\h*)+)?")|(?\'iodefvalue\'"(?\'url\'(mailto:.*|http:\/\/.*|https:\/\/.*))"))/';
 			preg_match($re, $content, $matches);
 
 			if (empty($matches)) {
@@ -204,7 +198,7 @@ class DomainZones extends ApiCommand implements ResourceEntity
 			} else {
 				// check whether there are RR-records for the same resource
 				foreach ($dom_entries as $existing_entries) {
-					if (($existing_entries['type'] == 'A' || $existing_entries['type'] == 'AAAA' || $existing_entries['type'] == 'MX' || $existing_entries['type'] == 'NS') && $existing_entries['record'] == $record) {
+					if ($existing_entries['record'] == $record) {
 						$errors[] = lng('error.dns_cname_nomorerr');
 						break;
 					}
@@ -236,9 +230,6 @@ class DomainZones extends ApiCommand implements ResourceEntity
 					if ($existing_entries['type'] == 'CNAME' && $fqdn == $content) {
 						$errors[] = lng('error.dns_mx_noalias');
 						break;
-					} elseif ($existing_entries['type'] == 'CNAME' && $existing_entries['record'] == $record) {
-						$errors[] = lng('error.dns_other_nomorerr');
-						break;
 					}
 				}
 			}
@@ -256,14 +247,6 @@ class DomainZones extends ApiCommand implements ResourceEntity
 			}
 			if (!Validate::validateDomain($content)) {
 				$errors[] = lng('error.dns_ns_invaliddom');
-			} else {
-				// check whether there is a CNAME-record for the same resource
-				foreach ($dom_entries as $existing_entries) {
-					if ($existing_entries['type'] == 'CNAME' && $existing_entries['record'] == $record) {
-						$errors[] = lng('error.dns_other_nomorerr');
-						break;
-					}
-				}
 			}
 			// append trailing dot (again)
 			$content .= '.';
@@ -521,10 +504,10 @@ class DomainZones extends ApiCommand implements ResourceEntity
 		]);
 		$id = $result['id'];
 
-		$sel_stmt = Database::prepare("SELECT COUNT(*) as num_dns FROM `" . TABLE_DOMAIN_DNS . "` WHERE `domain_id` = :did");
-		$result = Database::pexecute_first($sel_stmt, [
-			'did' => $id
-		], true, true);
+		$query_fields = [];
+		$sel_stmt = Database::prepare("SELECT COUNT(*) as num_dns FROM `" . TABLE_DOMAIN_DNS . "` WHERE `domain_id` = :did" . $this->getSearchWhere($query_fields, true));
+		$params = array_merge(['did' => $id], $query_fields);
+		$result = Database::pexecute_first($sel_stmt, $params, true, true);
 		if ($result) {
 			return $this->response($result['num_dns']);
 		}

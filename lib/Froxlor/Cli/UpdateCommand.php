@@ -1,8 +1,8 @@
 <?php
 
 /**
- * This file is part of the Froxlor project.
- * Copyright (c) 2010 the Froxlor Team (see authors).
+ * This file is part of the froxlor project.
+ * Copyright (c) 2010 the froxlor Team (see authors).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,13 +19,15 @@
  * https://files.froxlor.org/misc/COPYING.txt
  *
  * @copyright  the authors
- * @author     Froxlor team <team@froxlor.org>
+ * @author     froxlor team <team@froxlor.org>
  * @license    https://files.froxlor.org/misc/COPYING.txt GPLv2
  */
 
 namespace Froxlor\Cli;
 
 use Exception;
+use Froxlor\Database\Database;
+use Froxlor\FileDir;
 use Froxlor\Froxlor;
 use Froxlor\Install\AutoUpdate;
 use Froxlor\Install\Preconfig;
@@ -83,7 +85,7 @@ final class UpdateCommand extends CliCommand
 					}
 					return $result;
 				}
-				$output->writeln('<info>' . lng('update.noupdatesavail', (Settings::Get('system.update_channel') == 'testing' ? lng('serversettings.uc_testing') . ' ' : '')) . '</>');
+				$output->writeln('<info>' . lng('update.noupdatesavail', [(Settings::Get('system.update_channel') == 'testing' ? lng('serversettings.uc_testing') . ' ' : '')]) . '</>');
 			}
 			return $result;
 		}
@@ -186,11 +188,28 @@ final class UpdateCommand extends CliCommand
 								$output->writeln("<info>Froxlor files updated successfully.</>");
 								$result = self::SUCCESS;
 
+								// restart fpm if used to clear opcache
+								if ((int)Settings::Get('phpfpm.enabled') == 1 && Settings::Get('phpfpm.enabled_ownvhost') == '1') {
+									// get fpm restart cmd
+									$startstop_sel = Database::prepare("
+										SELECT f.reload_cmd, f.config_dir
+										FROM `" . TABLE_PANEL_FPMDAEMONS . "` f
+										LEFT JOIN `" . TABLE_PANEL_PHPCONFIGS . "` p ON p.fpmsettingid = f.id
+										WHERE p.id = :phpconfigid
+									");
+									$restart_cmd = Database::pexecute_first($startstop_sel, [
+										'phpconfigid' => Settings::Get('phpfpm.vhost_defaultini')
+									]);
+									// restart php-fpm instance
+									FileDir::safe_exec(escapeshellcmd($restart_cmd['reload_cmd']));
+								}
+
 								$this->askUpdateOptions($input, $output, $helper, $yestoall);
 
 								$question = new ConfirmationQuestion('Update database? [no] ', false, '/^(y|j)/i');
 								if ($yestoall || $helper->ask($input, $output, $question)) {
-									$result = $this->runUpdate($output, true);
+									// run in separate process to ensure the use of newly unpacked files
+									passthru(Froxlor::getInstallDir() . '/bin/froxlor-cli froxlor:update -dA', $result);
 								}
 							} else {
 								$errmsg = 'error.autoupdate_' . $auex;
